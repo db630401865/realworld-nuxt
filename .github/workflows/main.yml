@@ -1,0 +1,72 @@
+name: Publish And Deploy Demo
+# 生成标签用来管理版本。提交代码以V开头的就会触发自动化部署
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  # 构建与部署
+  build-and-deploy:
+    # 运行在ubuntu环境
+    runs-on: ubuntu-latest
+    # 步骤
+    steps:
+      # 下载源码
+      - name: Checkout
+        uses: actions/checkout@master
+
+      # 打包构建
+      - name: Build
+        uses: actions/setup-node@master
+      - run: npm install
+      - run: npm run build
+      # 将（.nuxt static nuxt.config.js package.json package-lock.json pm2.config.json）这些文件做成release.tgz压缩包 发布出去
+      - run: tar -zcvf release.tgz .nuxt static nuxt.config.js package.json package-lock.json pm2.config.json
+
+      # 发布 Release
+      - name: Create Release
+        id: create_release
+        uses: actions/create-release@master
+        # 使用secrets中的TOKEN
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}
+        with:
+          # 本次提交的名称
+          tag_name: ${{ github.ref }}
+          # Release的名称名称
+          release_name: Release ${{ github.ref }}
+          # 是否是草稿
+          draft: false
+          # 是否是预发布
+          prerelease: false
+
+      # 上传构建结果到 Release
+      - name: Upload Release Asset
+        id: upload-release-asset
+        uses: actions/upload-release-asset@master
+        env:
+          GITHUB_TOKEN: ${{ secrets.TOKEN }}
+        with:
+          # 上传Release地址，是在打包之前得到的
+          upload_url: ${{ steps.create_release.outputs.upload_url }}
+          # 上传Release文件路径
+          asset_path: ./release.tgz
+          asset_name: release.tgz
+          asset_content_type: application/x-tgz
+
+      # 部署到服务器
+      - name: Deploy
+        uses: appleboy/ssh-action@master
+        with:
+          host: ${{ secrets.HOST }}
+          username: ${{ secrets.USERNAME }}
+          password: ${{ secrets.PASSWORD }}
+          port: ${{ secrets.PORT }}
+          # npm install --production安装生产依赖项目
+          script: |
+            cd /root/realworld-nuxtjs
+            wget https://github.com/lipengzhou/realworld-nuxtjs/releases/latest/download/release.tgz -O release.tgz
+            tar zxvf release.tgz
+            npm install --production
+            pm2 reload pm2.config.json
